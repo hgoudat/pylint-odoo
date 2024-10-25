@@ -1,0 +1,68 @@
+trigger:
+- master
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  pythonVersion: '3.8'
+  system.debug: true
+
+steps:
+- task: UsePythonVersion@0
+  inputs:
+    versionSpec: '$(pythonVersion)'
+    addToPath: true
+
+- script: |
+    python -m pip install --upgrade pip
+    pip install -r requirements.txt
+  displayName: 'Install dependencies'
+
+- script: |
+    python -m pylint pylint_odoo
+  displayName: 'Lint with pylint'
+
+- script: |
+    python -m unittest discover -s pylint_odoo/test -p '*_test.py'
+  displayName: 'Run unit tests'
+
+- task: PublishTestResults@2
+  inputs:
+    testResultsFormat: 'JUnit'
+    testResultsFiles: '**/TEST-*.xml'
+    failTaskOnFailedTests: true
+
+- task: ArchiveFiles@2
+  inputs:
+    rootFolderOrFile: '$(Build.Repository.LocalPath)'
+    includeRootFolder: false
+    archiveType: 'zip'
+    archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+    replaceExistingArchive: true
+
+- task: PublishBuildArtifacts@1
+  inputs:
+    pathtoPublish: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+    artifactName: 'drop'
+    publishLocation: 'Container'
+
+- task: PythonScript@0
+  displayName: 'Validate Build'
+  inputs:
+    scriptSource: 'inline'
+    script: |
+      import os
+      if not os.path.exists('pylint_odoo/__init__.py'):
+          raise Exception('Build validation failed')
+
+- task: PythonScript@0
+  displayName: 'Security Scan'
+  inputs:
+    scriptSource: 'inline'
+    script: |
+      import os
+      import subprocess
+      result = subprocess.run(['bandit', '-r', 'pylint_odoo'], stdout=subprocess.PIPE)
+      if 'Issue: ' in result.stdout.decode('utf-8'):
+          raise Exception('Security scan failed')
